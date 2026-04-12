@@ -17,20 +17,25 @@ from typing import Any, List, Literal, Optional, Tuple, Union
 import time as _time
 import sys as _sys
 import atexit as _atexit
+import os as _os
 
 # --- SageAttention Console Logging ---
 # Set _SAGE_LOG_ENABLED = False to disable all logging.
 _SAGE_LOG_ENABLED = True
+_SAGE_LOG_DIR  = r"E:\Sd.Next\sagebench"
+_os.makedirs(_SAGE_LOG_DIR, exist_ok=True)
+_SAGE_LOG_FILE = _os.path.join(_SAGE_LOG_DIR, "sage.log")
+_SAGE_LOGGED_SHAPES = set()  # shapes written to sage.log this session
 _SAGE_STEP_CALLS = 0
 _SAGE_SEEN_PATHS = set()
 _SAGE_LAST_TIME = 0.0
 _SAGE_STEP_START = 0.0
 _SAGE_SPIN_IDX = 0
 _SAGE_LAST_SPIN = 0.0
-_SAGE_TAG_WIDTH = 42      # fixed visible width — every write pads to this
+_SAGE_TAG_WIDTH = 90      # fixed visible width — every write pads to this
 
 # Braille spinner frames
-_SAGE_FRAMES = "⣾⣽⣻⢿⡿⣟⣯⣷"
+_SAGE_FRAMES = "⠁⠂⠄⡀⢀⠠⠐⠈"
 
 # ANSI colors — matched to the SD.Next console palette
 _S = {
@@ -68,12 +73,11 @@ def _sage_log(func_name, q, k, v, tensor_layout, is_causal, dtype, path_label):
 
     # ── New step detected (>0.3s gap between call bursts) ──
     if gap > 0.3 and _SAGE_LAST_TIME > 0:
-        # Reset for new step
-        _SAGE_STEP_CALLS = 1
-        _SAGE_SEEN_PATHS = {path_label}
+        # Reset for new step — fall through so the first call still renders
+        _SAGE_STEP_CALLS = 0
+        _SAGE_SEEN_PATHS = set()
         _SAGE_STEP_START = now
-        _SAGE_LAST_TIME = now
-        return
+        _SAGE_LAST_SPIN = 0.0
     elif _SAGE_STEP_START == 0:
         _SAGE_STEP_START = now
 
@@ -81,16 +85,48 @@ def _sage_log(func_name, q, k, v, tensor_layout, is_causal, dtype, path_label):
     _SAGE_STEP_CALLS += 1
     _SAGE_SEEN_PATHS.add(path_label)
 
+    # ── Shape file logging (unique shapes only) ──
+    global _SAGE_LOGGED_SHAPES
+    if tensor_layout == "varlen":
+        shape_key = f"varlen tokens={q.size(0)} heads={q.size(1)} head_dim={q.size(2)} causal={is_causal} dtype={dtype}"
+    elif tensor_layout == "HND":
+        shape_key = f"B={q.size(0)} heads={q.size(1)} seq={q.size(2)} head_dim={q.size(3)} layout=HND causal={is_causal} dtype={dtype}"
+    else:  # NHD
+        shape_key = f"B={q.size(0)} seq={q.size(1)} heads={q.size(2)} head_dim={q.size(3)} layout=NHD causal={is_causal} dtype={dtype}"
+    if shape_key not in _SAGE_LOGGED_SHAPES:
+        _SAGE_LOGGED_SHAPES.add(shape_key)
+        with open(_SAGE_LOG_FILE, "a") as _f:
+            _f.write(shape_key + "\n")
+
     # ── Live spinner (throttled to ~60ms) ──
     if now - _SAGE_LAST_SPIN > 0.06:
         _SAGE_LAST_SPIN = now
-        _SAGE_SPIN_IDX = (_SAGE_SPIN_IDX + 1) % len(_SAGE_FRAMES)
-        frame = _SAGE_FRAMES[_SAGE_SPIN_IDX]
-        elapsed = now - _SAGE_STEP_START if _SAGE_STEP_START > 0 else 0
-        cur_path = path_label.split()[0]
+        # _SAGE_SPIN_IDX = (_SAGE_SPIN_IDX + 1) % len(_SAGE_FRAMES)  # spinner — hidden
+        # frame = _SAGE_FRAMES[_SAGE_SPIN_IDX]                        # spinner — hidden
+        # elapsed = now - _SAGE_STEP_START if _SAGE_STEP_START > 0 else 0  # hidden
+        # Triton-style shape: B×H×N×D
+        if tensor_layout == "varlen":
+            # q is [total_tokens, H, D]
+            shape_str = f"{q.size(0)}×{q.size(1)}×{q.size(2)}"
+        elif tensor_layout == "HND":
+            shape_str = f"{q.size(0)}×{q.size(1)}×{q.size(2)}×{q.size(3)}"
+        else:  # NHD
+            shape_str = f"{q.size(0)}×{q.size(1)}×{q.size(2)}×{q.size(3)}"
+        # Active autotune config
+        try:
+            import sageattention.attn_qk_int8_per_block as _m
+            _c = _m.configs[0]
+            cfg_str = (f"BM{_c.kwargs['BLOCK_M']} BN{_c.kwargs['BLOCK_N']}"
+                       f" nw{_c.num_warps} wpe{_c.kwargs['waves_per_eu']} ns{_c.num_stages}")
+        except Exception:
+            cfg_str = "?"
+        # (" ", None), (frame, _S['sp']), ("  ", None),  # spinner — hidden
+        # (" shp:", _S['dt']), (shape_str, _S['ct']),        # shape detail — hidden
+        # (" cfg:", _S['dt']), (cfg_str, _S['tm']),      # cfg detail — hidden
         _sage_write([
-            (" ", None), (frame, _S['sp']), ("  ", None),
-            ("[SageAttn]", _S['sg']),
+            (" [sage attention]", _S['sg']),
+            (" shp:", _S['dt']), (shape_str, _S['ct']),
+            (" cfg:", _S['dt']), (cfg_str, _S['tm']),
         ])
 # --- End Logging ---
 
@@ -167,7 +203,7 @@ def sageattn(
     seq_dim = 1 if tensor_layout == "NHD" else 2
 
     if smooth_k:
-        km = k.mean(dim=seq_dim, keepdim=True)
+        km = k.float().mean(dim=seq_dim, keepdim=True).to(k.dtype)
         k -= km
     else:
         km = None
@@ -184,7 +220,13 @@ def sageattn(
             _sage_log("sageattn", q, k, v, tensor_layout, is_causal, dtype, "INT8-h96 non-causal")
             return attn_h96_false(q_int8, k_int8, v, q_scale, k_scale, tensor_layout=tensor_layout, output_dtype=dtype)
 
-    q_int8, q_scale, k_int8, k_scale = per_block_int8(q, k, sm_scale=sm_scale, tensor_layout=tensor_layout)
+    import sageattention.attn_qk_int8_per_block as _sa_mod
+    import sageattention.attn_qk_int8_per_block_causal as _sa_mod_causal
+    _active_cfg = _sa_mod.configs[0] if _sa_mod.configs else None
+    _BLKQ = _active_cfg.kwargs.get('BLOCK_M', 32) if _active_cfg else 32
+    _BLKK = _active_cfg.kwargs.get('BLOCK_N', 16) if _active_cfg else 16
+
+    q_int8, q_scale, k_int8, k_scale = per_block_int8(q, k, BLKQ=_BLKQ, BLKK=_BLKK, sm_scale=sm_scale, tensor_layout=tensor_layout)
 
     if is_causal:
         _sage_log("sageattn", q, k, v, tensor_layout, is_causal, dtype, "INT8 causal")
@@ -276,7 +318,7 @@ def sageattn_varlen(
         v = v.to(torch.float16)
 
     if smooth_k:
-        km = k.mean(dim=0, keepdim=True) # ! km is calculated on the all the batches. Calculate over each individual sequence requires dedicated kernel.
+        km = k.float().mean(dim=0, keepdim=True).to(k.dtype)  # ! km is calculated on the all the batches. Calculate over each individual sequence requires dedicated kernel.
         k -= km
 
     q_int8, q_scale, k_int8, k_scale, cu_seqlens_q_scale, cu_seqlens_k_scale = per_block_int8_varlen(q, k, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, sm_scale=sm_scale)
