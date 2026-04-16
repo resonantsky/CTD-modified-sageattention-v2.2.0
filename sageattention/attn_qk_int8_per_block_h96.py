@@ -1,6 +1,7 @@
 import torch, math
 import triton
 import triton.language as tl
+from ._arch import _is_rdna
 
 
 @triton.jit
@@ -16,7 +17,8 @@ def _attn_fwd_inner(acc, l_i, m_i, q, q_scale, kv_len,
         k_mask = (offs_n[None, :] < (kv_len - start_n)) & ((tl.arange(0, 128) < 96)[:, None])
         k = tl.load(K_ptrs, mask = k_mask)
         k_scale = tl.load(K_scale_ptr)
-        qk = tl.dot(q, k).to(tl.float32) * q_scale * k_scale
+        scale = q_scale * k_scale  # combine scalars before tensor op — avoids Triton LLVM SSA bug on gfx1030
+        qk = tl.dot(q, k).to(tl.float32) * scale
         m_ij = tl.maximum(m_i, tl.max(qk, 1))
         qk = qk - m_ij[:, None]
         p = tl.math.exp2(qk)
@@ -125,8 +127,8 @@ def forward(q, k, v, q_scale, k_scale, tensor_layout="HND", output_dtype=torch.f
         qo_len, kv_len=kv_len,
         BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, HEAD_DIM=HEAD_DIM_K,  
         STAGE=stage,  
-        num_warps=8,  
-        num_stages=4)
+        num_warps=4 if _is_rdna else 8,
+        num_stages=2 if _is_rdna else 4)
     return o
 
 

@@ -1,6 +1,7 @@
 import torch, math
 import triton
 import triton.language as tl
+from ._arch import _is_rdna
 
 @triton.jit
 def _attn_fwd_inner(acc, l_i, m_i, q, q_scale, kv_len,
@@ -22,7 +23,8 @@ def _attn_fwd_inner(acc, l_i, m_i, q, q_scale, kv_len,
         k_mask = offs_n[None, :] < (kv_len - start_n)   
         k = tl.load(K_ptrs, mask = k_mask)
         k_scale = tl.load(K_scale_ptr)
-        qk = tl.dot(q, k).to(tl.float32) * q_scale * k_scale 
+        scale = q_scale * k_scale  # combine scalars before tensor op — avoids Triton LLVM SSA bug on gfx1030
+        qk = tl.dot(q, k).to(tl.float32) * scale 
 
         if STAGE == 2:
             mask = offs_m[:, None] >= (start_n + offs_n[None, :])
@@ -102,8 +104,8 @@ def _attn_fwd(Q, K, V, Q_scale, K_scale, Out,
     tl.store(O_block_ptr, acc.to(Out.type.element_ty), mask = (offs_m[:, None] < qo_len))
 
 def forward(q, k, v, q_scale, k_scale, tensor_layout="HND", output_dtype=torch.float16):
-    BLOCK_M = 32 #zlp
-    BLOCK_N = 16 #zlp
+    BLOCK_M = 32  # gfx1030 bench-aligned
+    BLOCK_N = 32  # aligned to triton_mm best config: BN=32
     stage = 3
 
     o = torch.empty(q.shape, dtype=output_dtype, device=q.device)
@@ -143,6 +145,6 @@ def forward(q, k, v, q_scale, k_scale, tensor_layout="HND", output_dtype=torch.f
         h_qo, num_kv_groups,
         BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, HEAD_DIM=HEAD_DIM_K,  
         STAGE=stage,  
-        num_warps=4 if head_dim == 64 else 8,
-        num_stages=4)
+        num_warps=2 if _is_rdna else 8,
+        num_stages=2 if _is_rdna else 4)  # stages=2 aligned to triton_mm best config
     return o

@@ -8,7 +8,7 @@ import triton.language as tl
 # ~4% off the best at any shape. Single-config autotune skips all benchmarking
 # (triton fast-paths len(configs)==1).
 configs = [
-    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'STAGE': 1, 'waves_per_eu': 3}, num_warps=2, num_stages=1)
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'STAGE': 1, 'waves_per_eu': 3}, num_warps=2, num_stages=2)  # aligned to triton_mm best config: BN=32, stages=2
 ]
 
 def keep(conf):
@@ -28,7 +28,8 @@ def _attn_fwd_inner(acc, l_i, m_i, q, q_scale, kv_len,
         k_mask = offs_n[None, :] < (kv_len - start_n)   
         k = tl.load(K_ptrs, mask = k_mask)
         k_scale = tl.load(K_scale_ptr)
-        qk = tl.dot(q, k).to(tl.float32) * q_scale * k_scale 
+        scale = q_scale * k_scale  # combine scalars before tensor op — avoids Triton LLVM SSA bug on gfx1030
+        qk = tl.dot(q, k).to(tl.float32) * scale 
         m_ij = tl.maximum(m_i, tl.max(qk, 1))
         qk = qk - m_ij[:, None]
         p = tl.math.exp2(qk)
