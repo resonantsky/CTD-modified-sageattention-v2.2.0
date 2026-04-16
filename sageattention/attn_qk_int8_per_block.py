@@ -8,7 +8,7 @@ import triton.language as tl
 # ~4% off the best at any shape. Single-config autotune skips all benchmarking
 # (triton fast-paths len(configs)==1).
 configs = [
-    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'STAGE': 1, 'waves_per_eu': 3}, num_warps=2, num_stages=2)  # aligned to triton_mm best config: BN=32, stages=2
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'STAGE': 2, 'waves_per_eu': 2}, num_warps=2, num_stages=2)  # aligned to triton_mm best config: BN=32, stages=2
 ]
 
 def keep(conf):

@@ -47,13 +47,14 @@ N_HEADS   = 16                  # typical for SD/diffusion models
 N_WARMUP  = 10                  # warmup iters per config (covers Triton JIT compile)
 N_ITER    = 50                  # timed iters — more at large seq for stable measurement
 
-# Config grid — hard ceilings enforced below before any launch
-# BLOCK_M=128 is now safe to test since num_warps is clamped to 4
-# (old crashes were caused by BLOCK_M=128 + num_warps=8 combined)
+# Config grid
+# bench_triton_mm_warps.py confirmed all of [2, 4, 8, 16] are safe on gfx1030 (0 crashes).
+# warps=2 wins most shapes; warps=8 is safe to include for sweep coverage.
+# stages=1 wins small/medium shapes in the triton_mm matmul bench — must be included.
 BLOCK_MS    = [32, 64, 128]     # 128 will be skipped at very short seq (grid too small)
 BLOCK_NS    = [16, 32, 64]      # 64 only valid when BN <= BM; enforced below
-NUM_WARPS_  = [2, 4]            # 4 is the safe ceiling on gfx1030
-NUM_STAGES_ = [2, 3]            # 3 = mild prefetch; do not go higher
+NUM_WARPS_  = [2, 4, 8]         # 8 confirmed safe on gfx1030 via triton_mm warp bench
+NUM_STAGES_ = [1, 2, 3]         # 1 wins small/medium shapes (triton_mm bench); 3 = mild prefetch
 
 CSV_OUT = "bench_sage_configs.csv"
 LOG_OUT = "bench_sage_configs.log"
@@ -99,8 +100,8 @@ def _time_config(
     Safety clamp applied here regardless of caller values.
     """
     # ── Safety clamp ────────────────────────────────────────────────────────
-    num_warps  = min(num_warps,  4)   # hard ceiling: gfx1030 safe max
-    num_stages = min(num_stages, 3)   # hard ceiling: gfx1030 safe max
+    num_warps  = min(num_warps,  8)   # gfx1030: [2..8] confirmed safe via triton_mm bench
+    num_stages = min(num_stages, 3)   # gfx1030: 1/2/3 all valid; >3 not tested
     # Ensure BLOCK_N <= BLOCK_M  (avoids degenerate tile shapes)
     BLOCK_N = min(BLOCK_N, BLOCK_M)
 
