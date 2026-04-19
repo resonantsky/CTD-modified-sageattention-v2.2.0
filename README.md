@@ -41,9 +41,6 @@ SageAttention is a high-performance, low-bit attention module for PyTorch, optim
 4. **Execution**:  
    Attention is computed using the selected kernel (Triton or binary extension), with configuration from `triton/config.py`.
 
-5. **Optional FlashAttention**:  
-   If available, `fa3_wrapper.py` provides a wrapper for FlashAttention v3.
-
 ## Notes
 
 - The `.pyd` files are essential for performance and must be included in any wheel or distribution.
