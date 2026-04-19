@@ -1,4 +1,4 @@
-# SageAttention
+# SageAttention v2.2.0 - Windows ROCm 7.1 
 
 SageAttention is a high-performance, low-bit attention module for PyTorch, optimized for AMD ROCm and RDNA architectures. It provides efficient quantized attention kernels and flexible integration for advanced transformer models.
 
@@ -17,7 +17,12 @@ SageAttention is a high-performance, low-bit attention module for PyTorch, optim
   - `quant_per_block.py`, `quant_per_thread.py`, etc.:  
     Quantization routines for different memory layouts and performance tradeoffs.
   - `config.py`:  
-    Launch configuration for Triton kernels, with tunable parameters for tile sizes and wavefronts.
+    Triton kernel launch configuration for ROCm/RDNA. This file defines:
+    - Tile sizes (BLOCK_M, BLOCK_N)
+    - Warp count (num_warps)
+    - Pipeline depth (num_stages)
+    - AMD-specific wavefront overlap hints (waves_per_eu)
+    Edit these parameters to tune performance for your hardware. Changes take effect on next import. The file also suppresses noisy kernel/backend warnings on import, making logs cleaner during development and runtime.
 
 - **\*.pyd files**  
   Compiled binary extensions for performance-critical routines (e.g., `_fused.cp312-win_amd64.pyd`, `_qattn_sm80.cp312-win_amd64.pyd`). These are required for fast inference and are loaded dynamically by the Python modules.
@@ -36,7 +41,10 @@ SageAttention is a high-performance, low-bit attention module for PyTorch, optim
 4. **Execution**:  
    Attention is computed using the selected kernel (Triton or binary extension), with configuration from `triton/config.py`.
 
+5. **Optional FlashAttention**:  
+   If available, `fa3_wrapper.py` provides a wrapper for FlashAttention v3.
 
 ## Notes
 
+- The `.pyd` files are essential for performance and must be included in any wheel or distribution.
 - The package is designed for advanced users needing custom or high-performance attention on AMD GPUs.
