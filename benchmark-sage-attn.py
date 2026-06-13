@@ -69,16 +69,18 @@ CORRECTNESS_TOL = 2.0
 # -- Shapes -------------------------------------------------------------------
 # (B, heads, seq, head_dim, layout, causal)
 SHAPES = [
-    (1, 20, 128, 128, "HND", False),
-    (2, 30, 8192, 128, "HND", False),
+    (1, 32, 6144, 128, "HND", False),
+    (1, 32, 6144, 64, "HND", False),
+    (2, 12, 6144, 128, "HND", False),
+    
 ]
 
 # -- Triton config grid -------------------------------------------------------
-BLOCK_M_VALS      = [16, 32]
-BLOCK_N_VALS      = [16, 32]
-NUM_WARPS_VALS    = [4]
-WAVES_PER_EU_VALS = [3]
-NUM_STAGES_VALS   = [2]
+BLOCK_M_VALS      = [32]
+BLOCK_N_VALS      = [16]
+NUM_WARPS_VALS    = [2,4,8,16]
+WAVES_PER_EU_VALS = [1]
+NUM_STAGES_VALS   = [1]
 
 def _keep(bm, bn, nw, wpe, ns):
     if bm < bn:
