@@ -2,9 +2,6 @@
 
 SageAttention is a high-performance, low-bit attention module for PyTorch, optimized for AMD ROCm and RDNA architectures. It provides efficient quantized attention kernels and flexible integration for advanced transformer models.
 
-This version has a static configuration module in \triton\config.py, in the case where head dimension is 64 or 128, 
-blocks adapt to the fastest config, in this case 64:32 & 128:16.
-
 Tuned for SD.Next on an RX6800 
 
 ## Directory Structure
